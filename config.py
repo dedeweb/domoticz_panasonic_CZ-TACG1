@@ -7,6 +7,9 @@ username = None
 password = None
 devices = None
 client = None
+# device IDs currently unreachable (e.g. air conditioner powered off), to log
+# the unreachable/reachable transition only once
+unreachable_devices = set()
 
 # constants
 appstore_url = 'https://apps.apple.com/app/panasonic-comfort-cloud/id1348640525'

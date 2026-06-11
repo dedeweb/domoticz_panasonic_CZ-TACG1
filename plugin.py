@@ -195,17 +195,24 @@ class PanasonicCZTACG1Plugin:
             deviceid = config.devices[x].DeviceID
             if len(deviceid) < 70:
                 if previous_id != deviceid:
-                    deviceid = config.devices[x].DeviceID
+                    # one network call per unique device; a powered-off unit makes
+                    # Panasonic answer HTTP 500 "Adapter Communication error" -> None
                     devicejson = accsmart.get_device_by_id(deviceid)
-                if (devicejson.get('parameters') is None):
-                    # the device is offline
-                    Domoticz.Log("The device " + deviceid + " return an error (code=" + str(devicejson.get('code')) + ", message=" + str(devicejson.get('message')) + ")")
+                if devicejson is None or devicejson.get('parameters') is None:
+                    # device unreachable (e.g. powered off): grey out the widget
+                    accsmart.set_reachable(config.devices[x], False)
+                    previous_id = deviceid
                     continue
+                accsmart.set_reachable(config.devices[x], True)
                 accsmart.handle_accsmart(config.devices[x], devicejson)
             else:
                 if previous_id != deviceid:
-                    deviceid = config.devices[x].DeviceID
                     devicejson = aquarea.load_device_details(deviceid)
+                if devicejson is None:
+                    accsmart.set_reachable(config.devices[x], False)
+                    previous_id = deviceid
+                    continue
+                accsmart.set_reachable(config.devices[x], True)
                 aquarea.handle_aquarea(config.devices[x], devicejson)
             previous_id = deviceid
 

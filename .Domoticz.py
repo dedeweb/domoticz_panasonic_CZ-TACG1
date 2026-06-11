@@ -16,13 +16,17 @@ class Device:
         self.__dict__.update(kwargs)
         self.__dict__['sValue']=""
         self.__dict__['nValue']=""
+        self.__dict__['TimedOut']=0
 
     def Create(self):
         print(f"Device created: {self.__dict__}")
         Devices[self.__dict__['Unit']] = self
 
-    def Update(self, nValue, sValue):
-        print(f"Device {self.__dict__['Name']} updated: nValue={nValue}, sValue={sValue}")
+    def Update(self, nValue, sValue, TimedOut=0):
+        self.nValue = nValue
+        self.sValue = sValue
+        self.TimedOut = TimedOut
+        print(f"Device {self.__dict__['Name']} updated: nValue={nValue}, sValue={sValue}, TimedOut={TimedOut}")
 
 
 def Log(message):

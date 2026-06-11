@@ -26,9 +26,30 @@ def get_device_by_id(device_id):
     #todo: use client api
     #device_hash_guid=get_device_hash_guid(device_id)
     #json_response=config.client.get_device(device_hash_guid)
-    json_response = config.client.execute_get(config.client._get_device_status_url(device_id), "get_device", 200)
+    try:
+        json_response = config.client.execute_get(config.client._get_device_status_url(device_id), "get_device", 200)
+    except Exception as e:
+        # e.g. HTTP 500 {"code":5005,"message":"Adapter Communication error"} when
+        # the unit is powered off. Return None so the caller can mark it unreachable.
+        Domoticz.Debug(f"get_device_by_id failed for {device_id}: {e}")
+        return None
     Domoticz.Debug(f"in get_device_by_id, json_response={json_response}")
     return json_response
+
+
+# track whether a device is reachable. We deliberately do NOT flag the Domoticz
+# device as TimedOut: that triggers "device expired" notification popups. Instead
+# we keep the widgets available with their last known values and just stop
+# updating them while the unit is powered off. Logs only once per transition.
+def set_reachable(device, reachable):
+    device_id = device.DeviceID
+    was_unreachable = device_id in config.unreachable_devices
+    if reachable and was_unreachable:
+        config.unreachable_devices.discard(device_id)
+        Domoticz.Log(f"{device_id} is reachable again")
+    elif not reachable and not was_unreachable:
+        config.unreachable_devices.add(device_id)
+        Domoticz.Log(f"{device_id} is unreachable (air conditioner powered off?); keeping last known values")
 
 # call the api to get device historic data
 def get_historic_data(device_id):
@@ -45,8 +66,12 @@ def update_device_id(device_id, parameter_name, parameter_value):
     device_hash_guid=get_device_hash_guid(device_id)
     Domoticz.Log(f"updating DeviceId={device_id}, device_hash_guid={device_hash_guid}, {parameter_name}={parameter_value}...")
     payload= {parameter_name: parameter_value}
-    res=config.client.set_device(device_hash_guid, **payload)
-    print(f'result of set_device={res}')   
+    try:
+        res=config.client.set_device(device_hash_guid, **payload)
+    except Exception as e:
+        # e.g. HTTP 500 "Adapter Communication error" when the unit is powered off
+        Domoticz.Log(f"Could not send command to {device_id} (powered off?): {e}")
+        return None
     #Domoticz.Log(f"payload={payload} url={config.client._get_device_status_control_url()}")
     #response = config.client.execute_post(config.client._get_device_status_control_url(), payload, "set_device", 200)
 

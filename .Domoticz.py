@@ -22,6 +22,10 @@ class Device:
         print(f"Device created: {self.__dict__}")
         Devices[self.__dict__['Unit']] = self
 
+    def Delete(self):
+        print(f"Device deleted: {self.__dict__['Name']}")
+        Devices.pop(self.__dict__['Unit'], None)
+
     def Update(self, nValue, sValue, TimedOut=0):
         self.nValue = nValue
         self.sValue = sValue

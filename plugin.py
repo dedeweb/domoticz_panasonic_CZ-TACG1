@@ -178,10 +178,11 @@ class PanasonicCZTACG1Plugin:
                 return
 
         previous_id = None
-        deviceid = None
         devicejson = None
         for x in config.devices:
-            deviceid = config.devices[x].DeviceID
+            # widget DeviceIDs are "<guid>#<widget key>"; group the network calls
+            # by the shared panasonic guid (one call per unit, not per widget)
+            deviceid = accsmart.get_panasonic_guid(config.devices[x])
             if len(deviceid) < 70:
                 if previous_id != deviceid:
                     # one network call per unique device; a powered-off unit makes

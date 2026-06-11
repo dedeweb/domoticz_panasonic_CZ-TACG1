@@ -14,6 +14,39 @@ import pcomfortcloud
 # Generic helper functions #
 ############################
 
+# Each Domoticz widget is identified by a stable key embedded in its DeviceID:
+#   "<panasonic guid>#<widget key>"   e.g. "CS-BZ60CKE+E299301492#room_temp"
+# This makes the identification independent from the widget Name, so users can
+# rename widgets freely without breaking updates/commands or causing duplicates.
+WIDGET_KEY_SEPARATOR = '#'
+
+# widget key -> default name suffix
+WIDGET_DEFS = {
+    'power': '[Power]',
+    'room_temp': '[Room Temp]',
+    'outdoor_temp': '[Outdoor Temp]',
+    'target_temp': '[Target temp]',
+    'mode': '[Mode]',
+    'fan_speed': '[Fan Speed]',
+    'eco_mode': '[Eco Mode]',
+    'air_swing': '[Air Swing]',
+    'energy': '[Energy]',
+}
+
+def make_widget_device_id(guid, widget_key):
+    return f"{guid}{WIDGET_KEY_SEPARATOR}{widget_key}"
+
+# returns (panasonic_guid, widget_key); widget_key is '' for legacy/aquarea ids
+def split_widget_device_id(device_id):
+    guid, _, widget_key = device_id.partition(WIDGET_KEY_SEPARATOR)
+    return guid, widget_key
+
+def get_widget_key(device):
+    return split_widget_device_id(device.DeviceID)[1]
+
+def get_panasonic_guid(device):
+    return split_widget_device_id(device.DeviceID)[0]
+
 # call the api to get a token
 def get_client():
     client = ApiClient(config.username, config.password)
@@ -42,14 +75,16 @@ def get_device_by_id(device_id):
 # we keep the widgets available with their last known values and just stop
 # updating them while the unit is powered off. Logs only once per transition.
 def set_reachable(device, reachable):
-    device_id = device.DeviceID
-    was_unreachable = device_id in config.unreachable_devices
+    # key on the panasonic guid (shared by all widgets of a unit) so the
+    # transition is logged once per unit, not once per widget
+    guid = get_panasonic_guid(device)
+    was_unreachable = guid in config.unreachable_devices
     if reachable and was_unreachable:
-        config.unreachable_devices.discard(device_id)
-        Domoticz.Log(f"{device_id} is reachable again")
+        config.unreachable_devices.discard(guid)
+        Domoticz.Log(f"{guid} is reachable again")
     elif not reachable and not was_unreachable:
-        config.unreachable_devices.add(device_id)
-        Domoticz.Log(f"{device_id} is unreachable (air conditioner powered off?); keeping last known values")
+        config.unreachable_devices.add(guid)
+        Domoticz.Log(f"{guid} is unreachable (air conditioner powered off?); keeping last known values")
 
 # call the api to get device historic data
 def get_historic_data(device_id):
@@ -143,39 +178,48 @@ def build_mode_options(deviceid):
 
 # Create only the widgets that don't exist yet for this device, so deleting a
 # single widget recreates just that one and existing widgets keep their history.
+# Widgets are identified by a stable key embedded in their DeviceID (see
+# make_widget_device_id), NOT by their Name, so they can be renamed freely.
 def add_device(devicename, deviceid, nbdevices):
-    existing_names = {config.devices[x].Name for x in config.devices}
+    # migrate from the legacy scheme where all widgets shared the bare panasonic
+    # guid as DeviceID: those can't be told apart reliably, delete them once (they
+    # are recreated right below with the new composite DeviceID)
+    legacy_units = [x for x in list(config.devices) if config.devices[x].DeviceID == deviceid]
+    for x in legacy_units:
+        Domoticz.Log(f"Migrating legacy device {config.devices[x].Name} (recreated with a per-widget DeviceID)...")
+        config.devices[x].Delete()
 
-    def spec(suffix, **kwargs):
-        return (devicename + suffix, kwargs)
+    existing_ids = {config.devices[x].DeviceID for x in config.devices}
 
     widgets = [
-        spec("[Power]", Image=16, TypeName="Switch"),
-        spec("[Room Temp]", TypeName="Temperature"),
-        spec("[Outdoor Temp]", TypeName="Temperature"),
-        spec("[Target temp]", Type=242, Subtype=1, Image=16),
-        # [Mode] options are built lazily below (needs a network call)
-        spec("[Mode]", TypeName="Selector Switch", Image=16, Options=None),
-        spec("[Fan Speed]", TypeName="Selector Switch", Image=7,
-             Options={"LevelActions": "|||||||", "LevelNames": "|Auto|Low|LowMid|Mid|HighMid|High", "LevelOffHidden": "true", "SelectorStyle": "1"}),
-        spec("[Eco Mode]", TypeName="Selector Switch", Image=7,
-             Options={"LevelActions": "|||||||", "LevelNames": "|Normal|Powerful|Quiet", "LevelOffHidden": "true", "SelectorStyle": "1"}),
-        spec("[Air Swing]", TypeName="Selector Switch", Image=7,
-             Options={"LevelActions": "|||||||||", "LevelNames": "Auto|Up|Down|Mid|UpMid|DownMid|Swing", "LevelOffHidden": "true", "SelectorStyle": "1"}),
+        ('power', dict(Image=16, TypeName="Switch")),
+        ('room_temp', dict(TypeName="Temperature")),
+        ('outdoor_temp', dict(TypeName="Temperature")),
+        ('target_temp', dict(Type=242, Subtype=1, Image=16)),
+        # mode options are built lazily below (needs a network call)
+        ('mode', dict(TypeName="Selector Switch", Image=16, Options=None)),
+        ('fan_speed', dict(TypeName="Selector Switch", Image=7,
+             Options={"LevelActions": "|||||||", "LevelNames": "|Auto|Low|LowMid|Mid|HighMid|High", "LevelOffHidden": "true", "SelectorStyle": "1"})),
+        ('eco_mode', dict(TypeName="Selector Switch", Image=7,
+             Options={"LevelActions": "|||||||", "LevelNames": "|Normal|Powerful|Quiet", "LevelOffHidden": "true", "SelectorStyle": "1"})),
+        ('air_swing', dict(TypeName="Selector Switch", Image=7,
+             Options={"LevelActions": "|||||||||", "LevelNames": "Auto|Up|Down|Mid|UpMid|DownMid|Swing", "LevelOffHidden": "true", "SelectorStyle": "1"})),
         # Use Options={'EnergyMeterMode': '1'} for "Calculated"; default is "From Device"
-        spec("[Energy]", TypeName="kWh", Options={'EnergyMeterMode': '0'}),
+        ('energy', dict(TypeName="kWh", Options={'EnergyMeterMode': '0'})),
     ]
 
     next_unit = max(config.devices) if config.devices else 0
     created = 0
-    for name, kwargs in widgets:
-        if name in existing_names:
+    for widget_key, kwargs in widgets:
+        widget_device_id = make_widget_device_id(deviceid, widget_key)
+        if widget_device_id in existing_ids:
             continue
-        if name == devicename + "[Mode]":
+        if widget_key == 'mode':
             # only hit the network when the Mode widget actually needs creating
             kwargs = dict(kwargs, Options=build_mode_options(deviceid))
         next_unit += 1
-        Domoticz.Device(Name=name, Unit=next_unit, Used=1, DeviceID=deviceid, **kwargs).Create()
+        Domoticz.Device(Name=devicename + WIDGET_DEFS[widget_key], Unit=next_unit, Used=1,
+                        DeviceID=widget_device_id, **kwargs).Create()
         created += 1
 
     if created:
@@ -188,36 +232,37 @@ def add_device(devicename, deviceid, nbdevices):
 def handle_accsmart(device, devicejson):
     power = 0
     value = "----"
-    if ("[Target temp]" in device.Name):
+    widget_key = get_widget_key(device)
+    if (widget_key == 'target_temp'):
         value = str(float(devicejson['parameters']['temperatureSet']))
-    elif ("[Room Temp]" in device.Name):
+    elif (widget_key == 'room_temp'):
         value = str(float(devicejson['parameters']['insideTemperature']))
-    elif ("[Outdoor Temp]" in device.Name):
+    elif (widget_key == 'outdoor_temp'):
         if (float(devicejson['parameters']['outTemperature']) > 100):
             value = "--"
         else:
             value = str(float(devicejson['parameters']['outTemperature']))
-    elif ("[Power]" in device.Name):
+    elif (widget_key == 'power'):
         power = int(devicejson['parameters']['operate'])
         value = str(power * 100)
-    elif ("[Mode]" in device.Name):
+    elif (widget_key == 'mode'):
         operationmode = int(devicejson['parameters']['operationMode'])
         value = str((operationmode + 1) * 10)
-    elif ("[Fan Speed]" in device.Name):
+    elif (widget_key == 'fan_speed'):
         fanspeed = int(devicejson['parameters']['fanSpeed'])
         value = str((fanspeed + 1) * 10)
-    elif ("[Eco Mode]" in device.Name):
+    elif (widget_key == 'eco_mode'):
         # ecoMode enum: Normal(=Auto in the API)=0, Powerful=1, Quiet=2.
         # selector levels are Normal=10, Powerful=20, Quiet=30 -> (value + 1) * 10
         ecomode = int(devicejson['parameters']['ecoMode'])
         value = str((ecomode + 1) * 10)
-    elif ("[Air Swing]" in device.Name):
+    elif (widget_key == 'air_swing'):
         # airSwingUD enum: Auto=-1, Up=0, Down=1, Mid=2, UpMid=3, DownMid=4, Swing=5.
         # The selector LevelNames are ordered to match, so level = (value + 1) * 10.
         airswing = int(devicejson['parameters']['airSwingUD'])
         value = str((airswing + 1) * 10)
-    elif ("[Energy]" in device.Name):
-        value = get_historic_data(device.DeviceID) # historic data is in kWh, domoticz wants W
+    elif (widget_key == 'energy'):
+        value = get_historic_data(get_panasonic_guid(device)) # historic data is in kWh, domoticz wants W
         if value.startswith('-255'):
             Domoticz.Log(f"keep previous value of get_historic_data for {device.DeviceID} = {device.sValue}")
             value = device.sValue  # keep previous value
@@ -229,31 +274,33 @@ def handle_accsmart(device, devicejson):
 
 
 def update_accsmart(p, Command, Level, device):
+    guid = get_panasonic_guid(device)
+    widget_key = get_widget_key(device)
     if (Command == "On"):
-        update_device_id(device.DeviceID, "operate", 1)
+        update_device_id(guid, "operate", 1)
         device.Update(nValue=1, sValue="100")
         p.powerOn = 1
     elif (Command == "Off"):
-        update_device_id(device.DeviceID, "operate", 0)
+        update_device_id(guid, "operate", 0)
         device.Update(nValue=0, sValue="0")
         p.powerOn = 0
     elif (Command == "Set Level"):
         if (device.nValue != p.powerOn or (device.sValue != Level) and Level != "--"):
-            if ("[Target temp]" in device.Name):
-                update_device_id(device.DeviceID, "temperatureSet", float(Level))
-            if ("[Mode]" in device.Name):
+            if (widget_key == 'target_temp'):
+                update_device_id(guid, "temperatureSet", float(Level))
+            if (widget_key == 'mode'):
                 operationmode = (Level / 10) - 1
-                update_device_id(device.DeviceID, "operationMode", int(operationmode))
-            elif ("[Fan Speed]" in device.Name):
+                update_device_id(guid, "operationMode", int(operationmode))
+            elif (widget_key == 'fan_speed'):
                 fanspeed = (Level / 10) - 1
-                update_device_id(device.DeviceID, "fanSpeed", int(fanspeed))
-            elif ("[Eco Mode]" in device.Name):
+                update_device_id(guid, "fanSpeed", int(fanspeed))
+            elif (widget_key == 'eco_mode'):
                 ecomode = (Level / 10) - 1
-                update_device_id(device.DeviceID, "ecoMode", int(ecomode))
-            elif ("[Air Swing]" in device.Name):
+                update_device_id(guid, "ecoMode", int(ecomode))
+            elif (widget_key == 'air_swing'):
                 # inverse of the read mapping: value = (Level / 10) - 1
                 airswing = (Level / 10) - 1
-                update_device_id(device.DeviceID, "airSwingUD", int(airswing))
+                update_device_id(guid, "airSwingUD", int(airswing))
             device.Update(nValue=p.powerOn, sValue=str(Level))
 
 def get_device_hash_guid(device_id):

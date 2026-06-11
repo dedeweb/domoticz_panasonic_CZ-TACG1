@@ -67,7 +67,15 @@ class PanasonicCZTACG1Plugin:
         Domoticz.Debug("onStart called")
         # 1st try to get last version of the plugin
         config.api_version = common.get_app_version(True)
-        config.client = accsmart.get_client()
+        try:
+            config.client = accsmart.get_client()
+        except Exception as e:
+            # Panasonic sometimes refuses the login temporarily (HTTP 401/412).
+            # Don't crash and don't wipe the existing devices: keep them and let
+            # onHeartbeat re-establish the session on its own.
+            Domoticz.Error(f"Could not connect to Panasonic Comfort Cloud at startup: {e}")
+            Domoticz.Error("Existing devices are kept; will retry on next heartbeat.")
+            return
         config.aquarea_token = aquarea.get_aquarea_token()
 
         if config.debug_level == "Debug":
@@ -163,6 +171,20 @@ class PanasonicCZTACG1Plugin:
         if time.time() - self.last_update < update_interval:
             Domoticz.Debug("update interval not reached")
             return
+
+        # if the Comfort Cloud session could not be established at startup
+        # (e.g. Panasonic temporarily refused the login with a 401/412), try to
+        # re-establish it here so the plugin recovers on its own. Throttled by
+        # update_interval to avoid hammering Panasonic's login endpoint.
+        if config.client is None:
+            try:
+                Domoticz.Log("Comfort Cloud session not established, trying to reconnect...")
+                config.client = accsmart.get_client()
+            except Exception as e:
+                Domoticz.Error(f"Reconnect to Panasonic Comfort Cloud failed, will retry: {e}")
+                self.last_update = time.time()
+                return
+
         previous_id = None
         deviceid = None
         devicejson = None

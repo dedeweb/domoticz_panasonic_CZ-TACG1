@@ -17,6 +17,8 @@ git clone https://github.com/sdamasoc/domoticz_panasonic_CZ-TACG1.git domoticz_p
 ```
 So in this case the directory structure should now be: domoticz/plugins/domoticz_panasonic_CZ-TACG1/plugin.py
 
+> **Note:** on recent Domoticz versions and on the Docker images, the plugins directory is `userdata/plugins` (e.g. `/opt/domoticz/userdata/plugins/`). Clone the plugin there instead. Each plugin must sit in its own subfolder with `plugin.py` directly inside it, otherwise Domoticz won't detect it.
+
 Next, you need to restart Domoticz so that it will find the plugin:
 ```
  sudo systemctl restart domoticz.service
@@ -38,8 +40,15 @@ https://www.domoticz.com/wiki/Using_Python_plugins
 
 # Requirements
 - This plugin requires python v3.8 (or greater)
-- It uses the python `requests` module to send and receive json content to the panasonic cloud, and the `beautifulsoup4` (`bs4`) module to parse the Panasonic login page. If you don't have them, install them as root with: `pip3 install requests beautifulsoup4`
-- If you run Domoticz in Docker, install these into the interpreter Domoticz uses (often a virtualenv). For example: `docker exec <container> /opt/venv/bin/pip install requests beautifulsoup4`. Note that packages installed this way are lost if the container is recreated, so prefer baking them into a custom image (e.g. a `RUN pip install ...` in your Dockerfile).
+- It depends on the python `requests` module (to talk to the Panasonic cloud) and `beautifulsoup4`/`bs4` (to parse the Panasonic login page). These are listed in `requirements.txt`; install them as root with:
+  ```
+  pip3 install -r requirements.txt
+  ```
+- If you run Domoticz in Docker, install them into the interpreter Domoticz uses (often a virtualenv). For example:
+  ```
+  docker exec <container> /opt/venv/bin/pip install -r /opt/domoticz/userdata/plugins/domoticz_panasonic_CZ-TACG1/requirements.txt
+  ```
+  Note that packages installed this way are lost if the container is recreated, so prefer baking them into a custom image (e.g. a `RUN pip install -r requirements.txt` in your Dockerfile).
 
 - You need a panasonic id associated with your devices to be able to use this plugin:
 1. Create a new panasonic account here: [Panasonic ID Registration](https://csapl.pcpf.panasonic.com/Account/Register001?lang=en)
@@ -72,11 +81,20 @@ Aquarea support inspired by: https://github.com/Hernas/homebridge-panasonic-heat
 # Compatibility
 This script was tested with:
 * Domoticz Version: 2023.2
-* Python Version: 3.10.12
-* Ubuntu: 22.04.3 LTS 
+* Python Version: 3.10.12 and 3.11
+* Ubuntu: 22.04.3 LTS (and the Domoticz Docker image)
+
+# Troubleshooting
+- **The plugin doesn't appear in the hardware dropdown:** check it's in the right plugins folder (`userdata/plugins/<name>/plugin.py` on recent/Docker installs), that the dependencies are installed for the interpreter Domoticz uses (see Requirements), and look at the Domoticz log at startup for the exact error.
+- **`401 ... Login ID or password is incorrect`:** use your Panasonic **Comfort Cloud account** email and password (the ones you log in with in the mobile app) — *not* the device ID / device password printed on the unit.
+- **`401 ... New version app has been published`:** the API version is too old. The plugin auto-detects the latest Comfort Cloud version from the App Store; you can also override it via the "API Version" hardware field.
+- **`412 Precondition Failed` (code 41201):** an intermittent, server-side Panasonic condition (often temporary throttling after many logins). Wait ~30–60 min and retry; avoid restarting the plugin in a loop.
+- **Air conditioner powered off / unplugged:** the API returns `500 Adapter Communication error`. The plugin handles this gracefully — it keeps the widgets with their last known values (no error spam) and resumes automatically when the unit is back.
 
 # To test this plugin outside Domoticz
-1. In plugin.py uncomment line: `from Domoticz import Parameters, Devices`
-2. Rename .Domoticz.py to Domoticz.py
-3. Put your credentials in Domoticz.py
-4. Run testPlugin.py: `python testPlugin.py`
+A mock `Domoticz` module and a `testPlugin.py` harness let you run the plugin standalone (no editing of `plugin.py` needed):
+1. Rename `.Domoticz.py` to `Domoticz.py`
+2. Put your Panasonic account credentials in `Domoticz.py` (and optionally adjust the `Mode3` API version)
+3. Run the test harness: `python3 testPlugin.py`
+
+`testPlugin.py` injects `Parameters` and `Devices` into the plugin module just like Domoticz does at runtime.

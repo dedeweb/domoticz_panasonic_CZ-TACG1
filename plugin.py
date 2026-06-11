@@ -44,8 +44,9 @@ import aquarea
 import config
 import common
 import os
-# to test locally uncomment this line, rename .Domoticz.py to Domoticz.py and set your cvredentials in Domoticz.py
-# from Domoticz import Parameters, Devices
+# Parameters and Devices are injected into this module's globals by Domoticz at
+# runtime. For standalone testing, testPlugin.py injects equivalent mocks before
+# calling onStart (see testPlugin.py).
 
 class PanasonicCZTACG1Plugin:
     enabled = True
@@ -149,7 +150,9 @@ class PanasonicCZTACG1Plugin:
         Domoticz.Log("Command received for device Name=" + config.devices[Unit].Name + "(deviceId=" + config.devices[
             Unit].DeviceID + ") U=" + str(Unit) + " C=" + str(Command) + " L=" + str(Level) + " H=" + str(Hue))
 
-        if len(config.devices[Unit].DeviceID) < 20:
+        # same accsmart/aquarea split as onHeartbeat (accsmart device IDs are short,
+        # e.g. 'CS-BZ60CKE+E299301492'; aquarea IDs are much longer)
+        if len(config.devices[Unit].DeviceID) < 70:
             # handle accsmart
             accsmart.update_accsmart(self, Command, Level, config.devices[Unit])
         else:

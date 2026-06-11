@@ -151,7 +151,7 @@ def add_device(devicename, deviceid, nbdevices):
     nbdevices = nbdevices + 1
     Domoticz.Device(Name=devicename + "[Fan Speed]", Unit=nbdevices, TypeName="Selector Switch", Image=7, Options=Options, Used=1, DeviceID=deviceid).Create()
     # ecoMode
-    Options = {"LevelActions": "|||||||", "LevelNames": "|Auto|Powerful|Quiet", "LevelOffHidden": "true", "SelectorStyle": "1"}
+    Options = {"LevelActions": "|||||||", "LevelNames": "|Normal|Powerful|Quiet", "LevelOffHidden": "true", "SelectorStyle": "1"}
     nbdevices = nbdevices + 1
     Domoticz.Device(Name=devicename + "[Eco Mode]", Unit=nbdevices, TypeName="Selector Switch", Image=7, Options=Options, Used=1, DeviceID=deviceid).Create()
 
@@ -194,8 +194,10 @@ def handle_accsmart(device, devicejson):
         fanspeed = int(devicejson['parameters']['fanSpeed'])
         value = str((fanspeed + 1) * 10)
     elif ("[Eco Mode]" in device.Name):
+        # ecoMode enum: Normal(=Auto in the API)=0, Powerful=1, Quiet=2.
+        # selector levels are Normal=10, Powerful=20, Quiet=30 -> (value + 1) * 10
         ecomode = int(devicejson['parameters']['ecoMode'])
-        value = str(ecomode)
+        value = str((ecomode + 1) * 10)
     elif ("[Air Swing]" in device.Name):
         # airSwingUD enum: Auto=-1, Up=0, Down=1, Mid=2, UpMid=3, DownMid=4, Swing=5.
         # The selector LevelNames are ordered to match, so level = (value + 1) * 10.

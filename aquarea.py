@@ -29,7 +29,9 @@ def get_aquarea_token():
     try:
         return _get_aquarea_token_impl()
     except Exception as e:
-        Domoticz.Error(f"Could not get Aquarea token (skipping Aquarea support): {e}")
+        # Expected for air-conditioner-only setups (Aquarea service unreachable or
+        # no heat pump on the account): log as info, not as an error.
+        Domoticz.Log(f"Aquarea support unavailable, skipping (this is normal if you only have an air conditioner): {e}")
         return None
 
 

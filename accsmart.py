@@ -172,8 +172,10 @@ def handle_accsmart(device, devicejson):
         ecomode = int(devicejson['parameters']['ecoMode'])
         value = str(ecomode)
     elif ("[Air Swing]" in device.Name):
+        # airSwingUD enum: Auto=-1, Up=0, Down=1, Mid=2, UpMid=3, DownMid=4, Swing=5.
+        # The selector LevelNames are ordered to match, so level = (value + 1) * 10.
         airswing = int(devicejson['parameters']['airSwingUD'])
-        value = str(airswing -1)
+        value = str((airswing + 1) * 10)
     elif ("[Energy]" in device.Name):
         value = get_historic_data(device.DeviceID) # historic data is in kWh, domoticz wants W
         if value.startswith('-255'):
@@ -209,8 +211,9 @@ def update_accsmart(p, Command, Level, device):
                 ecomode = (Level / 10) - 1
                 update_device_id(device.DeviceID, "ecoMode", int(ecomode))
             elif ("[Air Swing]" in device.Name):
-                airswing = (Level - 1)
-                update_device_id(device.DeviceID, "airSwingVertical", int(airswing))
+                # inverse of the read mapping: value = (Level / 10) - 1
+                airswing = (Level / 10) - 1
+                update_device_id(device.DeviceID, "airSwingUD", int(airswing))
             device.Update(nValue=p.powerOn, sValue=str(Level))
 
 def get_device_hash_guid(device_id):

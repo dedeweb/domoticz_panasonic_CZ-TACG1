@@ -141,8 +141,18 @@ def add_device(devicename, deviceid, nbdevices):
     nbdevices = nbdevices + 1
     Domoticz.Device(Name=devicename + "[Target temp]", Unit=nbdevices, Type=242, Subtype=1, Image=16, Used=1, DeviceID=deviceid).Create()
 
-    # operationMode
-    Options = {"LevelActions": "|||||", "LevelNames": "|Auto|Dry|Cool|Heat|Fan", "LevelOffHidden": "true", "SelectorStyle": "1"}
+    # operationMode selector — hide modes the unit does not support (e.g. no Fan).
+    # The order matches the OperationMode enum (Auto=0, Dry=1, Cool=2, Heat=3, Fan=4)
+    # so the level mapping (value+1)*10 stays valid. We only drop unsupported modes
+    # from the END of the list, which keeps every remaining level aligned.
+    mode_defs = [("Auto", "autoMode"), ("Dry", "dryMode"), ("Cool", "coolMode"),
+                 ("Heat", "heatMode"), ("Fan", "fanMode")]
+    status = get_device_by_id(deviceid) or {}
+    # default to available when the status is unknown, so we never hide a real mode
+    mode_names = [name if status.get(flag, True) else "" for (name, flag) in mode_defs]
+    while mode_names and mode_names[-1] == "":
+        mode_names.pop()
+    Options = {"LevelActions": "|" * len(mode_names), "LevelNames": "|" + "|".join(mode_names), "LevelOffHidden": "true", "SelectorStyle": "1"}
     nbdevices = nbdevices + 1
     Domoticz.Device(Name=devicename + "[Mode]", Unit=nbdevices, TypeName="Selector Switch", Image=16, Options=Options, Used=1, DeviceID=deviceid).Create()
 

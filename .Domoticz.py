@@ -4,7 +4,7 @@
 Parameters = {
         "Mode1": 60,
         "Mode2": "Debug",
-        "Mode3": "1.22.0",
+        "Mode3": "4.3.0",
         "Username": "<YOUR_USERNAME>",
         "Password": "<YOUR_PASSWORD>"
     }
@@ -25,15 +25,12 @@ class Device:
         print(f"Device {self.__dict__['Name']} updated: nValue={nValue}, sValue={sValue}")
 
 
-@staticmethod
 def Log(message):
     print(f"Log: {message}")
 
-@staticmethod
 def Debug(message):
     print(f"Debug: {message}")
 
-@staticmethod
 def Error(message):
     print(f"Error: {message}")
 

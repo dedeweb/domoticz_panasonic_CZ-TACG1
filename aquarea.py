@@ -23,6 +23,17 @@ def extract_from_regex(string, regex):
         return None
     
 def get_aquarea_token():
+    # Aquarea (heat pump) support is optional. Any failure here (e.g. the service
+    # is unreachable, the account has no Aquarea device, or the auth flow changes)
+    # must not crash onStart for users who only have an air conditioner.
+    try:
+        return _get_aquarea_token_impl()
+    except Exception as e:
+        Domoticz.Error(f"Could not get Aquarea token (skipping Aquarea support): {e}")
+        return None
+
+
+def _get_aquarea_token_impl():
     # if token already exist reuse it
     if os.path.exists(config.aquarea_token_file_path):
         with open(config.aquarea_token_file_path, 'r') as token_file:

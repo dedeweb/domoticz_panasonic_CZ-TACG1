@@ -38,7 +38,8 @@ https://www.domoticz.com/wiki/Using_Python_plugins
 
 # Requirements
 - This plugin requires python v3.8 (or greater)
-- It uses python requests and simplejson modules to send and receive json content to panasonic cloud. If you don't have them execute `pip3 install requests` and `pip3 install simplejson` as root to install.
+- It uses the python `requests` module to send and receive json content to the panasonic cloud, and the `beautifulsoup4` (`bs4`) module to parse the Panasonic login page. If you don't have them, install them as root with: `pip3 install requests beautifulsoup4`
+- If you run Domoticz in Docker, install these into the interpreter Domoticz uses (often a virtualenv). For example: `docker exec <container> /opt/venv/bin/pip install requests beautifulsoup4`. Note that packages installed this way are lost if the container is recreated, so prefer baking them into a custom image (e.g. a `RUN pip install ...` in your Dockerfile).
 
 - You need a panasonic id associated with your devices to be able to use this plugin:
 1. Create a new panasonic account here: [Panasonic ID Registration](https://csapl.pcpf.panasonic.com/Account/Register001?lang=en)

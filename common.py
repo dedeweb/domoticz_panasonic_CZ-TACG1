@@ -28,25 +28,20 @@ def get_app_version(first_time=False):
             version = version_file.read().strip()
             Domoticz.Log("Reusing existing api_version=" + version)
             return version
-    # else    
+    # else, query the iTunes lookup API which returns the current version as JSON
     try:
         Domoticz.Log("Getting latest Comfort Cloud version from the App Store...")
-        response = requests.request("GET", config.appstore_url)
+        response = requests.get(config.appstore_lookup_url, timeout=10)
         response.raise_for_status()  # Vérifiez si la requête a réussi; sinon, une exception est levée
 
-        html_string = response.text
-        start_str = 'class="l-column small-6 medium-12 whats-new__latest__version">Version '
-        end_str = '</p>'
+        results = response.json().get("results", [])
+        if results and results[0].get("version"):
+            version = results[0]["version"]
+            Domoticz.Log("get_app_version=" + version)
+        else:
+            Domoticz.Error(f"Could not find version in App Store response; keeping {version}")
 
-        start_pos = html_string.find(start_str)
-        if start_pos != -1:
-            start_pos += len(start_str)
-            end_pos = html_string.find(end_str, start_pos)
-            if end_pos != -1:
-                version = html_string[start_pos:end_pos]
-                Domoticz.Log("get_app_version=" + version)
-
-        # save the token
+        # save the version
         with open(config.api_version_file_path, 'w') as version_file:
             version_file.write(version)
 

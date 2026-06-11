@@ -126,25 +126,11 @@ def dump_http_response_to_log(httpResp, level=0):
 # End helper functions #
 ########################
 
-def add_device(devicename, deviceid, nbdevices):
-    Domoticz.Log(f"Creating accsmart devices for {devicename}, DeviceID={deviceid}, Unit={nbdevices}...")
-    # TODO check if device is support before creation ("airSwingLR":true,"nanoe":false,"autoMode":true,"autoSwingUD":false,"ecoNavi":false,...)
-    nbdevices = nbdevices + 1
-    Domoticz.Device(Name=devicename + "[Power]", Unit=nbdevices, Image=16, TypeName="Switch", Used=1, DeviceID=deviceid).Create()
-
-    nbdevices = nbdevices + 1
-    Domoticz.Device(Name=devicename + "[Room Temp]", Unit=nbdevices, TypeName="Temperature", Used=1, DeviceID=deviceid).Create()
-
-    nbdevices = nbdevices + 1
-    Domoticz.Device(Name=devicename + "[Outdoor Temp]", Unit=nbdevices, TypeName="Temperature", Used=1, DeviceID=deviceid).Create()
-
-    nbdevices = nbdevices + 1
-    Domoticz.Device(Name=devicename + "[Target temp]", Unit=nbdevices, Type=242, Subtype=1, Image=16, Used=1, DeviceID=deviceid).Create()
-
-    # operationMode selector — hide modes the unit does not support (e.g. no Fan).
-    # The order matches the OperationMode enum (Auto=0, Dry=1, Cool=2, Heat=3, Fan=4)
-    # so the level mapping (value+1)*10 stays valid. We only drop unsupported modes
-    # from the END of the list, which keeps every remaining level aligned.
+# build the [Mode] selector options, hiding modes the unit does not support (e.g.
+# no Fan). The order matches the OperationMode enum (Auto=0, Dry=1, Cool=2, Heat=3,
+# Fan=4) so the level mapping (value+1)*10 stays valid. We only drop unsupported
+# modes from the END of the list, which keeps every remaining level aligned.
+def build_mode_options(deviceid):
     mode_defs = [("Auto", "autoMode"), ("Dry", "dryMode"), ("Cool", "coolMode"),
                  ("Heat", "heatMode"), ("Fan", "fanMode")]
     status = get_device_by_id(deviceid) or {}
@@ -152,33 +138,50 @@ def add_device(devicename, deviceid, nbdevices):
     mode_names = [name if status.get(flag, True) else "" for (name, flag) in mode_defs]
     while mode_names and mode_names[-1] == "":
         mode_names.pop()
-    Options = {"LevelActions": "|" * len(mode_names), "LevelNames": "|" + "|".join(mode_names), "LevelOffHidden": "true", "SelectorStyle": "1"}
-    nbdevices = nbdevices + 1
-    Domoticz.Device(Name=devicename + "[Mode]", Unit=nbdevices, TypeName="Selector Switch", Image=16, Options=Options, Used=1, DeviceID=deviceid).Create()
+    return {"LevelActions": "|" * len(mode_names), "LevelNames": "|" + "|".join(mode_names), "LevelOffHidden": "true", "SelectorStyle": "1"}
 
-    # fanSpeed
-    Options = {"LevelActions": "|||||||", "LevelNames": "|Auto|Low|LowMid|Mid|HighMid|High", "LevelOffHidden": "true", "SelectorStyle": "1"}
-    nbdevices = nbdevices + 1
-    Domoticz.Device(Name=devicename + "[Fan Speed]", Unit=nbdevices, TypeName="Selector Switch", Image=7, Options=Options, Used=1, DeviceID=deviceid).Create()
-    # ecoMode
-    Options = {"LevelActions": "|||||||", "LevelNames": "|Normal|Powerful|Quiet", "LevelOffHidden": "true", "SelectorStyle": "1"}
-    nbdevices = nbdevices + 1
-    Domoticz.Device(Name=devicename + "[Eco Mode]", Unit=nbdevices, TypeName="Selector Switch", Image=7, Options=Options, Used=1, DeviceID=deviceid).Create()
 
-    # airSwingUD => 0,3,2,4,1 (weird)
-    Options = {"LevelActions": "|||||||||", "LevelNames": "Auto|Up|Down|Mid|UpMid|DownMid|Swing", "LevelOffHidden": "true", "SelectorStyle": "1"}
-    nbdevices = nbdevices + 1
-    Domoticz.Device(Name=devicename + "[Air Swing]", Unit=nbdevices, TypeName="Selector Switch", Image=7, Options=Options, Used=1, DeviceID=deviceid).Create()
-    
-    # energyConsumption
-    nbdevices = nbdevices + 1
-    #Use Options={'EnergyMeterMode': '1' } to set energyMeterMode to "Calculated". Default is "From Device"
-    Options={'EnergyMeterMode': '0' }
-    Domoticz.Device(Name=devicename + "[Energy]", Unit=nbdevices, TypeName="kWh", Options=Options, Used=1, DeviceID=deviceid).Create()
+# Create only the widgets that don't exist yet for this device, so deleting a
+# single widget recreates just that one and existing widgets keep their history.
+def add_device(devicename, deviceid, nbdevices):
+    existing_names = {config.devices[x].Name for x in config.devices}
 
-    # TODO add other switches?
+    def spec(suffix, **kwargs):
+        return (devicename + suffix, kwargs)
 
-    Domoticz.Log("Device " + devicename + " created (DeviceID=" + deviceid + ").")
+    widgets = [
+        spec("[Power]", Image=16, TypeName="Switch"),
+        spec("[Room Temp]", TypeName="Temperature"),
+        spec("[Outdoor Temp]", TypeName="Temperature"),
+        spec("[Target temp]", Type=242, Subtype=1, Image=16),
+        # [Mode] options are built lazily below (needs a network call)
+        spec("[Mode]", TypeName="Selector Switch", Image=16, Options=None),
+        spec("[Fan Speed]", TypeName="Selector Switch", Image=7,
+             Options={"LevelActions": "|||||||", "LevelNames": "|Auto|Low|LowMid|Mid|HighMid|High", "LevelOffHidden": "true", "SelectorStyle": "1"}),
+        spec("[Eco Mode]", TypeName="Selector Switch", Image=7,
+             Options={"LevelActions": "|||||||", "LevelNames": "|Normal|Powerful|Quiet", "LevelOffHidden": "true", "SelectorStyle": "1"}),
+        spec("[Air Swing]", TypeName="Selector Switch", Image=7,
+             Options={"LevelActions": "|||||||||", "LevelNames": "Auto|Up|Down|Mid|UpMid|DownMid|Swing", "LevelOffHidden": "true", "SelectorStyle": "1"}),
+        # Use Options={'EnergyMeterMode': '1'} for "Calculated"; default is "From Device"
+        spec("[Energy]", TypeName="kWh", Options={'EnergyMeterMode': '0'}),
+    ]
+
+    next_unit = max(config.devices) if config.devices else 0
+    created = 0
+    for name, kwargs in widgets:
+        if name in existing_names:
+            continue
+        if name == devicename + "[Mode]":
+            # only hit the network when the Mode widget actually needs creating
+            kwargs = dict(kwargs, Options=build_mode_options(deviceid))
+        next_unit += 1
+        Domoticz.Device(Name=name, Unit=next_unit, Used=1, DeviceID=deviceid, **kwargs).Create()
+        created += 1
+
+    if created:
+        Domoticz.Log(f"Created {created} missing device(s) for {devicename} (DeviceID={deviceid}).")
+    else:
+        Domoticz.Debug(f"All devices already present for {devicename} (DeviceID={deviceid}).")
 
 
 

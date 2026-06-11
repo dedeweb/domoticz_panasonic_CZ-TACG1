@@ -90,12 +90,9 @@ class PanasonicCZTACG1Plugin:
         panasonic_devices = config.client._groups
         Domoticz.Debug(f"panasonic_devices={panasonic_devices}")
 
-        # loop found devices to create then in domoticz
-        nbdevices = len(config.devices)  # (nbdevices:=nbdevices+1) = ++nbdevices
-
         # only create devices that don't exist yet, so existing devices (and their
-        # history) are preserved across restarts. The "exist" check below skips
-        # devices already present in Domoticz.
+        # history) are preserved across restarts.
+        nbdevices = max(config.devices) if config.devices else 0
         for group in panasonic_devices['groupList']:
             groupname = group['groupName']
             for device in group['deviceList']:
@@ -103,22 +100,17 @@ class PanasonicCZTACG1Plugin:
                 deviceid = device['deviceGuid']
                 deviceType = device['deviceType']
 
-                exist = False
-                for x in config.devices:
-                    # Domoticz.Debug("x="+str(x)+",DeviceID="+ config.devices[x].DeviceID + ", Name="+config.devices[x].Name + "Dump=" + str(config.devices[x]));
-                    # check if there's an unitId > nbdevices
-                    if (x > nbdevices):
-                        nbdevices = x
-                    # check if device already exist in Domoticz
-                    if (devicename in config.devices[x].Name):
-                        exist = True
-
-                if exist :
-                    Domoticz.Log("Device " + devicename + " already exists in domoticz (DeviceID=" + deviceid + ").")
-                elif(deviceType == "2"):
-                    Domoticz.Log("Aquarea devices (deviceType=" + deviceType + ") IS IN ALPHA MODE") 
-                    aquarea.add_device(devicename, nbdevices)
-                else :
+                if deviceType == "2":
+                    # Aquarea (alpha): all-or-nothing creation
+                    exist = any(devicename in config.devices[x].Name for x in config.devices)
+                    if exist:
+                        Domoticz.Log("Device " + devicename + " already exists in domoticz (DeviceID=" + deviceid + ").")
+                    else:
+                        Domoticz.Log("Aquarea devices (deviceType=" + deviceType + ") IS IN ALPHA MODE")
+                        aquarea.add_device(devicename, nbdevices)
+                else:
+                    # accsmart: idempotent per-widget creation (only missing widgets),
+                    # so deleting a single widget recreates just that one
                     accsmart.add_device(devicename, deviceid, nbdevices)
 
         onHeartbeat()

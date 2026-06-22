@@ -302,8 +302,16 @@ def handle_accsmart(device, devicejson):
     elif (widget_key == 'air_swing'):
         # airSwingUD enum: Auto=-1, Up=0, Down=1, Mid=2, UpMid=3, DownMid=4, Swing=5.
         # The selector LevelNames are ordered to match, so level = (value + 1) * 10.
-        airswing = int(devicejson['parameters']['airSwingUD'])
-        value = str((airswing + 1) * 10)
+        # When the vertical swing is in Auto, the API keeps the last manual
+        # position in airSwingUD and signals Auto through fanAutoMode instead
+        # (Both=0 or AirSwingUD=2), so honour fanAutoMode first.
+        fan_auto_mode = devicejson['parameters'].get('fanAutoMode')
+        if fan_auto_mode in (constants.AirSwingAutoMode.Both.value,
+                             constants.AirSwingAutoMode.AirSwingUD.value):
+            value = "0"  # Auto
+        else:
+            airswing = int(devicejson['parameters']['airSwingUD'])
+            value = str((airswing + 1) * 10)
     elif (widget_key == 'energy'):
         value = get_historic_data(get_panasonic_guid(device)) # historic data is in kWh, domoticz wants W
         if value.startswith('-255'):
@@ -342,8 +350,12 @@ def update_accsmart(p, Command, Level, device):
                 update_device_id(guid, "ecoMode", int(ecomode))
             elif (widget_key == 'air_swing'):
                 # inverse of the read mapping: value = (Level / 10) - 1
-                airswing = (Level / 10) - 1
-                update_device_id(guid, "airSwingUD", int(airswing))
+                airswing = int((Level / 10) - 1)
+                # go through airSwingVertical (the enum) so set_device runs its
+                # fanAutoMode routine: Auto (-1) toggles fanAutoMode instead of
+                # just writing a raw airSwingUD that the unit would ignore.
+                update_device_id(guid, "airSwingVertical",
+                                 constants.AirSwingUD(airswing))
             device.Update(nValue=p.powerOn, sValue=str(Level))
 
 def get_device_hash_guid(device_id):

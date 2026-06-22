@@ -86,15 +86,58 @@ def set_reachable(device, reachable):
         config.unreachable_devices.add(guid)
         Domoticz.Log(f"{guid} is unreachable (air conditioner powered off?); keeping last known values")
 
+# Panasonic uses -255 as a "no data" sentinel for hourly slots that haven't
+# happened yet or weren't recorded.
+NO_DATA = -255
+
+# pull a per-hour consumption (kWh) out of one historyDataList entry, or None if
+# the slot has no data. The key has varied across API versions, so be permissive.
+def _entry_consumption(entry):
+    if not isinstance(entry, dict):
+        return None
+    for key in ('consumption', 'energyConsumption', 'energy'):
+        value = entry.get(key)
+        if value is not None and value != NO_DATA:
+            return value
+    return None
+
 # call the api to get device historic data
 def get_historic_data(device_id):
-    # TODO: implement this with new API
-    # config.client.history(...)
-    last_consumption_value = 0
-    energyConsumption = 0
-    Domoticz.Log("get_historic_data is not implemented with new API")
-    Domoticz.Log(f"get_historic_data for {device_id}  = {last_consumption_value};{energyConsumption}")
-    return f'{last_consumption_value};{energyConsumption}'
+    # Panasonic exposes consumption through the deviceHistoryData endpoint. We
+    # query the current day in "Day" mode: historyDataList holds one entry per
+    # hour with the consumption in kWh (future/empty hours are -255).
+    # Domoticz' kWh widget wants "<instant W>;<total Wh>".
+    # device_id here is already the real Panasonic deviceGuid (see
+    # get_panasonic_guid in the caller), which is exactly what the payload needs.
+    payload = {
+        "deviceGuid": device_id,
+        "dataMode": constants.DataMode.Day.value,
+        "date": datetime.now().strftime('%Y%m%d'),
+        "osTimezone": "+01:00",
+    }
+    try:
+        response = config.client.execute_post(
+            config.client._get_device_history_url(), payload, "history", 200)
+    except Exception as e:
+        # e.g. unit powered off / API hiccup: signal the caller to keep the
+        # previous value rather than writing a bogus 0.
+        Domoticz.Log(f"get_historic_data failed for {device_id} (powered off?): {e}")
+        return '-255;0'
+
+    Domoticz.Debug(f"get_historic_data raw response for {device_id}: {response}")
+    history_list = (response or {}).get('historyDataList') or []
+
+    # keep only the hours that actually have data, in chronological order
+    consumptions = [c for c in (_entry_consumption(e) for e in history_list)
+                    if c is not None]
+
+    # day total so far (kWh -> Wh) and the most recent recorded hour as the
+    # "instantaneous" figure for the kWh widget
+    energy_wh = int(sum(consumptions) * 1000)
+    last_wh = int(consumptions[-1] * 1000) if consumptions else 0
+
+    Domoticz.Debug(f"get_historic_data for {device_id} = {last_wh};{energy_wh}")
+    return f'{last_wh};{energy_wh}'
 
 # call the api to update device parameter
 def update_device_id(device_id, parameter_name, parameter_value):

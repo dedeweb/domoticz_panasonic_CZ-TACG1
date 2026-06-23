@@ -52,3 +52,31 @@ def get_app_version(first_time=False):
         Domoticz.Error(f"An unexpected error occurred: {e}")
 
     return version
+
+# Domoticz' "From Device" kWh meter treats the energy field as an absolute,
+# ever-increasing Wh counter and draws each bar as the difference between two
+# readings. The Panasonic APIs return the *daily* total, which resets to 0 every
+# midnight, so the rollover shows up as a big negative bar. Turn that daily
+# figure into a monotonic counter by only ever adding the increment.
+_energy_state = {}  # device DeviceID -> {'meter': Wh, 'day_total': Wh}
+
+def monotonic_energy(device, raw):
+    last_part, _, total_part = raw.partition(';')
+    day_total = int(total_part)
+    key = device.DeviceID
+    state = _energy_state.get(key)
+    if state is None:
+        # first poll this session: continue from whatever counter Domoticz already
+        # stored, so a plugin restart doesn't create a one-off jump or drop.
+        try:
+            meter = int(float(device.sValue.split(';')[1]))
+        except (ValueError, IndexError, AttributeError):
+            meter = day_total
+        _energy_state[key] = {'meter': meter, 'day_total': day_total}
+        return f'{last_part};{meter}'
+    # a smaller day_total than last time means midnight rolled over (or the unit
+    # was off and the day reset), so the new total is itself the increment.
+    delta = day_total - state['day_total'] if day_total >= state['day_total'] else day_total
+    state['meter'] += delta
+    state['day_total'] = day_total
+    return f'{last_part};{state["meter"]}'

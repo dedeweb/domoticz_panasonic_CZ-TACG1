@@ -420,6 +420,10 @@ def handle_aquarea(device, devicejson):
         if value.startswith('-255'):
             Domoticz.Log(f"keep previous value of get_historic_data for {device.DeviceID} = {device.sValue}")
             value = device.sValue  # keep previous value
+        else:
+            # convert the API's daily total into a monotonic Wh counter so the
+            # midnight reset stops drawing a negative bar in Domoticz.
+            value = common.monotonic_energy(device, value)
 
     #Domoticz.Debug(f"Device ID: {device.DeviceID}, Name: {device.Name}, value: {value}")
     # update value only if value has changed

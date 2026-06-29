@@ -28,7 +28,11 @@ WIDGET_DEFS = {
     'target_temp': '[Target temp]',
     'mode': '[Mode]',
     'fan_speed': '[Fan Speed]',
-    'eco_mode': '[Eco Mode]',
+    # ecoMode is exposed as two mutually-exclusive on/off switches (like the
+    # Panasonic app) instead of a selector: dzVents' switchSelector mis-maps the
+    # levels of a hidden-Off selector, making Quiet unreachable from scripts.
+    'eco_powerful': '[Powerful]',
+    'eco_quiet': '[Quiet]',
     'air_swing': '[Air Swing]',
     'energy': '[Energy]',
 }
@@ -43,6 +47,17 @@ def split_widget_device_id(device_id):
 
 def get_widget_key(device):
     return split_widget_device_id(device.DeviceID)[1]
+
+# turn a sibling widget of the same unit Off (used to keep the Powerful/Quiet
+# switches mutually exclusive without waiting for the next status poll)
+def switch_sibling_off(guid, widget_key):
+    target = make_widget_device_id(guid, widget_key)
+    for unit in config.devices:
+        sibling = config.devices[unit]
+        if sibling.DeviceID == target:
+            if sibling.nValue != 0:
+                sibling.Update(nValue=0, sValue="0")
+            return
 
 def get_panasonic_guid(device):
     return split_widget_device_id(device.DeviceID)[0]
@@ -232,6 +247,16 @@ def add_device(devicename, deviceid, nbdevices):
         Domoticz.Log(f"Migrating legacy device {config.devices[x].Name} (recreated with a per-widget DeviceID)...")
         config.devices[x].Delete()
 
+    # the old '[Eco Mode]' selector is replaced by the '[Powerful]'/'[Quiet]'
+    # switches created below. Delete it once so it stops cluttering the unit.
+    obsolete = [x for x in list(config.devices)
+                if get_panasonic_guid(config.devices[x]) == deviceid
+                and get_widget_key(config.devices[x]) == 'eco_mode']
+    for x in obsolete:
+        Domoticz.Log(f"Removing obsolete Eco Mode selector {config.devices[x].Name} "
+                     f"(replaced by Powerful/Quiet switches)...")
+        config.devices[x].Delete()
+
     existing_ids = {config.devices[x].DeviceID for x in config.devices}
 
     widgets = [
@@ -243,8 +268,8 @@ def add_device(devicename, deviceid, nbdevices):
         ('mode', dict(TypeName="Selector Switch", Image=16, Options=None)),
         ('fan_speed', dict(TypeName="Selector Switch", Image=7,
              Options={"LevelActions": "|||||||", "LevelNames": "|Auto|Low|LowMid|Mid|HighMid|High", "LevelOffHidden": "true", "SelectorStyle": "1"})),
-        ('eco_mode', dict(TypeName="Selector Switch", Image=7,
-             Options={"LevelActions": "|||||||", "LevelNames": "|Normal|Powerful|Quiet", "LevelOffHidden": "true", "SelectorStyle": "1"})),
+        ('eco_powerful', dict(TypeName="Switch", Image=16)),
+        ('eco_quiet', dict(TypeName="Switch", Image=16)),
         ('air_swing', dict(TypeName="Selector Switch", Image=7,
              Options={"LevelActions": "|||||||||", "LevelNames": "Auto|Up|Down|Mid|UpMid|DownMid|Swing", "LevelOffHidden": "true", "SelectorStyle": "1"})),
         # Use Options={'EnergyMeterMode': '1'} for "Calculated"; default is "From Device"
@@ -294,11 +319,17 @@ def handle_accsmart(device, devicejson):
     elif (widget_key == 'fan_speed'):
         fanspeed = int(devicejson['parameters']['fanSpeed'])
         value = str((fanspeed + 1) * 10)
-    elif (widget_key == 'eco_mode'):
-        # ecoMode enum: Normal(=Auto in the API)=0, Powerful=1, Quiet=2.
-        # selector levels are Normal=10, Powerful=20, Quiet=30 -> (value + 1) * 10
+    elif (widget_key == 'eco_powerful'):
+        # ecoMode enum: Auto/Normal=0, Powerful=1, Quiet=2. Powerful and Quiet
+        # are surfaced as two mutually-exclusive on/off switches; this one is On
+        # only when the unit is in Powerful.
         ecomode = int(devicejson['parameters']['ecoMode'])
-        value = str((ecomode + 1) * 10)
+        power = 1 if ecomode == constants.EcoMode.Powerful.value else 0
+        value = str(power * 100)
+    elif (widget_key == 'eco_quiet'):
+        ecomode = int(devicejson['parameters']['ecoMode'])
+        power = 1 if ecomode == constants.EcoMode.Quiet.value else 0
+        value = str(power * 100)
     elif (widget_key == 'air_swing'):
         # airSwingUD enum: Auto=-1, Up=0, Down=1, Mid=2, UpMid=3, DownMid=4, Swing=5.
         # The selector LevelNames are ordered to match, so level = (value + 1) * 10.
@@ -331,14 +362,28 @@ def handle_accsmart(device, devicejson):
 def update_accsmart(p, Command, Level, device):
     guid = get_panasonic_guid(device)
     widget_key = get_widget_key(device)
-    if (Command == "On"):
-        update_device_id(guid, "operate", 1)
-        device.Update(nValue=1, sValue="100")
-        p.powerOn = 1
-    elif (Command == "Off"):
-        update_device_id(guid, "operate", 0)
-        device.Update(nValue=0, sValue="0")
-        p.powerOn = 0
+    if (Command == "On" or Command == "Off"):
+        on = 1 if Command == "On" else 0
+        if (widget_key == 'eco_powerful'):
+            # On -> Powerful, Off -> back to Auto/Normal
+            update_device_id(guid, "ecoMode",
+                             constants.EcoMode.Powerful.value if on else constants.EcoMode.Auto.value)
+            device.Update(nValue=on, sValue=str(on * 100))
+            # Powerful and Quiet are mutually exclusive; clear the sibling right
+            # away so the UI doesn't show both On until the next status poll.
+            if on:
+                switch_sibling_off(guid, 'eco_quiet')
+        elif (widget_key == 'eco_quiet'):
+            update_device_id(guid, "ecoMode",
+                             constants.EcoMode.Quiet.value if on else constants.EcoMode.Auto.value)
+            device.Update(nValue=on, sValue=str(on * 100))
+            if on:
+                switch_sibling_off(guid, 'eco_powerful')
+        else:
+            # the [Power] switch (and any other plain switch) toggles the unit
+            update_device_id(guid, "operate", on)
+            device.Update(nValue=on, sValue=str(on * 100))
+            p.powerOn = on
     elif (Command == "Set Level"):
         if (device.nValue != p.powerOn or (device.sValue != Level) and Level != "--"):
             if (widget_key == 'target_temp'):
@@ -349,9 +394,6 @@ def update_accsmart(p, Command, Level, device):
             elif (widget_key == 'fan_speed'):
                 fanspeed = (Level / 10) - 1
                 update_device_id(guid, "fanSpeed", int(fanspeed))
-            elif (widget_key == 'eco_mode'):
-                ecomode = (Level / 10) - 1
-                update_device_id(guid, "ecoMode", int(ecomode))
             elif (widget_key == 'air_swing'):
                 # inverse of the read mapping: value = (Level / 10) - 1
                 airswing = int((Level / 10) - 1)

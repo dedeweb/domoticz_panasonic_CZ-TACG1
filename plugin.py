@@ -180,31 +180,45 @@ class PanasonicCZTACG1Plugin:
         previous_id = None
         devicejson = None
         for x in config.devices:
-            # widget DeviceIDs are "<guid>#<widget key>"; group the network calls
-            # by the shared panasonic guid (one call per unit, not per widget)
-            deviceid = accsmart.get_panasonic_guid(config.devices[x])
-            if len(deviceid) < 70:
-                if previous_id != deviceid:
-                    # one network call per unique device; a powered-off unit makes
-                    # Panasonic answer HTTP 500 "Adapter Communication error" -> None
-                    devicejson = accsmart.get_device_by_id(deviceid)
-                if devicejson is None or devicejson.get('parameters') is None:
-                    # device unreachable (e.g. powered off): grey out the widget
-                    accsmart.set_reachable(config.devices[x], False)
-                    previous_id = deviceid
-                    continue
-                accsmart.set_reachable(config.devices[x], True)
-                accsmart.handle_accsmart(config.devices[x], devicejson)
-            else:
-                if previous_id != deviceid:
-                    devicejson = aquarea.load_device_details(deviceid)
-                if devicejson is None:
-                    accsmart.set_reachable(config.devices[x], False)
-                    previous_id = deviceid
-                    continue
-                accsmart.set_reachable(config.devices[x], True)
-                aquarea.handle_aquarea(config.devices[x], devicejson)
-            previous_id = deviceid
+            # A single bad poll or a partial/unexpected API payload (e.g. a HTTP
+            # 200 with a missing field) used to raise straight out of onHeartbeat
+            # and kill the plugin thread for good ("thread seems to have ended
+            # unexpectedly", only recoverable by restarting Domoticz). Isolate
+            # every widget so one failure never takes the whole plugin down.
+            try:
+                # widget DeviceIDs are "<guid>#<widget key>"; group the network calls
+                # by the shared panasonic guid (one call per unit, not per widget)
+                deviceid = accsmart.get_panasonic_guid(config.devices[x])
+                if len(deviceid) < 70:
+                    if previous_id != deviceid:
+                        # one network call per unique device; a powered-off unit makes
+                        # Panasonic answer HTTP 500 "Adapter Communication error" -> None
+                        devicejson = accsmart.get_device_by_id(deviceid)
+                    if devicejson is None or devicejson.get('parameters') is None:
+                        # device unreachable (e.g. powered off): grey out the widget
+                        accsmart.set_reachable(config.devices[x], False)
+                        previous_id = deviceid
+                        continue
+                    accsmart.set_reachable(config.devices[x], True)
+                    accsmart.handle_accsmart(config.devices[x], devicejson)
+                else:
+                    if previous_id != deviceid:
+                        devicejson = aquarea.load_device_details(deviceid)
+                    if devicejson is None:
+                        accsmart.set_reachable(config.devices[x], False)
+                        previous_id = deviceid
+                        continue
+                    accsmart.set_reachable(config.devices[x], True)
+                    aquarea.handle_aquarea(config.devices[x], devicejson)
+                previous_id = deviceid
+            except Exception as e:
+                # Log and skip this widget; keep polling the others and keep the
+                # thread alive so the plugin recovers on the next heartbeat.
+                Domoticz.Error(f"onHeartbeat: error handling device unit {x} "
+                               f"({config.devices[x].Name}): {e}")
+                previous_id = None
+                devicejson = None
+                continue
 
 
 
@@ -243,7 +257,12 @@ def onMessage(Connection, Data):
 
 def onCommand(Unit, Command, Level, Hue):
     global _plugin
-    _plugin.onCommand(Unit, Command, Level, Hue)
+    # same last-resort guard as onHeartbeat: a failed command must not take the
+    # whole plugin thread down.
+    try:
+        _plugin.onCommand(Unit, Command, Level, Hue)
+    except Exception as e:
+        Domoticz.Error(f"onCommand failed for unit {Unit}: {e}")
 
 
 def onNotification(Name, Subject, Text, Status, Priority, Sound, ImageFile):
@@ -258,7 +277,13 @@ def onDisconnect(Connection):
 
 def onHeartbeat():
     global _plugin
-    _plugin.onHeartbeat()
+    # last-resort guard: never let an unhandled exception escape the heartbeat,
+    # otherwise Domoticz kills the plugin thread ("thread seems to have ended
+    # unexpectedly") and it only comes back after a Domoticz restart.
+    try:
+        _plugin.onHeartbeat()
+    except Exception as e:
+        Domoticz.Error(f"onHeartbeat failed, will retry next cycle: {e}")
 
 # Dumps the config to debug log
 def dump_config_to_log():
